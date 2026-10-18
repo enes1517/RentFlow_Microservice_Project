@@ -1,0 +1,32 @@
+<div class="onboarding-container">
+  <div class="ambient-glow ambient-glow--top"></div>
+  <div class="ambient-glow ambient-glow--bottom"></div>
+
+  <div class="onboarding-card" *ngIf="invitationToken">
+    <div class="logo">
+      <div class="logo-mark">
+        <span class="logo-mark__icon">⚡</span>
+      </div>
+      <h1 class="logo-title">RentFlow</h1>
+    </div>
+
+    <div class="invitation-badge">
+      <span class="badge-dot"></span>
+      <span>Özel Kiracı Davetiyesi</span>
+    </div>
+
+    <h2>Platforma Hoş Geldiniz!</h2>
+    <p>Kiracı olarak platforma davet edildiniz. Sisteme üye olup dijital kiralama sözleşmenizi görüntülemek ve onaylamak için aşağıdaki butona tıklayın.</p>
+    
+    <button class="btn btn-primary" (click)="goToRegistration()">
+      Kayıt Ol ve Sözleşmeyi İncele →
+    </button>
+  </div>
+  
+  <div class="onboarding-card onboarding-card--invalid" *ngIf="!invitationToken">
+    <div class="warning-icon">⚠️</div>
+    <h2>Geçersiz Bağlantı</h2>
+    <p>Davetiye token'ı bulunamadı veya süresi dolmuş olabilir. Lütfen size gönderilen e-postadaki bağlantıyı tekrar kontrol edin veya ev sahibinizden yeni bir davet isteyin.</p>
+    <a routerLink="/auth/login" class="btn btn-secondary mt-4">Giriş Ekranına Dön</a>
+  </div>
+</div>

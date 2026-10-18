@@ -1,0 +1,5 @@
+{
+  "identity": {
+    "issuer": "http://localhost:8080/realms/rent-management"
+  }
+}

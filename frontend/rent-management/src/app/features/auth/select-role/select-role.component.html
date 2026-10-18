@@ -1,0 +1,37 @@
+<div class="select-role-container">
+  <div class="ambient-glow ambient-glow--top"></div>
+  <div class="ambient-glow ambient-glow--bottom"></div>
+
+  <div class="select-role-card">
+    <div class="logo">
+      <div class="logo-mark">
+        <span class="logo-mark__icon">⚡</span>
+      </div>
+      <h1 class="logo-title">RentFlow</h1>
+    </div>
+
+    <h2>Hesap Türünüzü Seçin</h2>
+    <p class="subtitle">Platformu ne amaçla kullanacağınızı belirleyin. Bu seçiminize göre özel arayüz ve araçlarınız aktif edilecektir.</p>
+    
+    <div class="role-options">
+      <button class="role-btn landlord-btn" [disabled]="isSubmitting" (click)="selectRole('ROLE_LANDLORD')">
+        <div class="icon-wrap">🏠</div>
+        <h3>Ev Sahibiyim</h3>
+        <p>Mülklerimi listelemek, sözleşmeler oluşturmak ve kira tahsilatlarını izlemek istiyorum.</p>
+        <span class="role-chip">Mülk Sahibi Paneli →</span>
+      </button>
+
+      <button class="role-btn tenant-btn" [disabled]="isSubmitting" (click)="selectRole('ROLE_TENANT')">
+        <div class="icon-wrap">🔑</div>
+        <h3>Kiracıyım</h3>
+        <p>Kira sözleşmelerimi incelemek, online kartla kira ödemek ve bakım talepleri iletmek istiyorum.</p>
+        <span class="role-chip">Kiracı Hizmetleri →</span>
+      </button>
+    </div>
+
+    <div class="loading" *ngIf="isSubmitting">
+      <div class="spinner"></div>
+      <p>Rolünüz tanımlanıyor ve güvenli oturumunuz güncelleniyor, lütfen bekleyin...</p>
+    </div>
+  </div>
+</div>

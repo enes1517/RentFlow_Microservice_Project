@@ -1,0 +1,705 @@
+services:
+  # ================================================================
+  # VERÄ°TABANLARI
+  # ================================================================
+
+  # PostgreSQL â€” User Service, Report Service, Saga Orchestrator
+  postgres:
+    image: postgres:16-alpine
+    container_name: rent-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d
+    networks:
+      - rent-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # SQL Server â€” Lease Service, Payment Service
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: rent-sqlserver
+    restart: unless-stopped
+    environment:
+      SA_PASSWORD: ${SA_PASSWORD}
+      ACCEPT_EULA: Y
+      MSSQL_PID: ${MSSQL_PID}
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    networks:
+      - rent-network
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P '${SA_PASSWORD}' -Q 'SELECT 1' -No"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # SQL Server Init â€” DB oluÅŸturma scripti
+  sqlserver-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: rent-sqlserver-init
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      SA_PASSWORD: ${SA_PASSWORD}
+    volumes:
+      - ./infrastructure/sqlserver/init:/scripts
+    command: >
+      bash -c "sleep 5 && /opt/mssql-tools18/bin/sqlcmd -S sqlserver -U SA -P '${SA_PASSWORD}' -i /scripts/01_create_databases.sql -No"
+    networks:
+      - rent-network
+
+  # MongoDB â€” Property, Maintenance, Notification, Document
+  mongodb:
+    image: mongo:7-jammy
+    container_name: rent-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./infrastructure/mongodb/init:/docker-entrypoint-initdb.d
+    networks:
+      - rent-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis â€” Cache, RedLock, Idempotency, Rate Limiting, JWT Blacklist
+  redis:
+    image: redis:7-alpine
+    container_name: rent-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 512mb --maxmemory-policy allkeys-lru --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - rent-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ================================================================
+  # MESAJLAÅMA
+  # ================================================================
+
+  # RabbitMQ — MassTransit Message Broker
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rent-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - rent-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ================================================================
+  # AUTH
+  # ================================================================
+
+  # Keycloak â€” Identity & Access Management
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: rent-keycloak
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak_db
+      KC_DB_USERNAME: ${KC_DB_USERNAME}
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HOSTNAME: localhost
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infrastructure/keycloak:/opt/keycloak/data/import
+      - ./infrastructure/keycloak/themes/rentflow:/opt/keycloak/themes/rentflow:ro
+    command: start-dev --import-realm
+    networks:
+      - rent-network
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+
+  # Keycloak Demo Users — optionally apply local-only passwords from .env
+  keycloak-demo-users-init:
+    image: node:22-alpine
+    container_name: rent-keycloak-demo-users-init
+    restart: "no"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    environment:
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KEYCLOAK_DEMO_ADMIN_PASSWORD: ${KEYCLOAK_DEMO_ADMIN_PASSWORD:-}
+      KEYCLOAK_DEMO_LANDLORD_PASSWORD: ${KEYCLOAK_DEMO_LANDLORD_PASSWORD:-}
+      KEYCLOAK_DEMO_TENANT_PASSWORD: ${KEYCLOAK_DEMO_TENANT_PASSWORD:-}
+    volumes:
+      - ./infrastructure/keycloak/init-demo-users.mjs:/scripts/init-demo-users.mjs:ro
+    command: ["node", "/scripts/init-demo-users.mjs"]
+    networks:
+      - rent-network
+
+  # ================================================================
+  # DEPOLAMA
+  # ================================================================
+
+  # MinIO â€” PDF ve resim depolama (S3-compatible)
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: rent-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - rent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  # MinIO Init â€” Bucket oluÅŸturma
+  minio-init:
+    image: quay.io/minio/mc:latest
+    container_name: rent-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
+        mc mb --ignore-existing myminio/documents;
+        mc mb --ignore-existing myminio/images;
+        mc anonymous set public myminio/images;
+        exit 0;
+      "
+    networks:
+      - rent-network
+
+  # ================================================================
+  # GÃ–ZLEMLENME (OBSERVABILITY)
+  # ================================================================
+
+  # Seq â€” Structured log viewer
+  seq:
+    image: datalust/seq:latest
+    container_name: rent-seq
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: Y
+      SEQ_FIRSTRUN_ADMINPASSWORD: Admin123!
+    ports:
+      - "5341:80"
+    volumes:
+      - seq_data:/data
+    networks:
+      - rent-network
+
+  # Zipkin â€” Distributed tracing
+  zipkin:
+    image: openzipkin/zipkin:latest
+    container_name: rent-zipkin
+    restart: unless-stopped
+    ports:
+      - "9411:9411"
+    networks:
+      - rent-network
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.137.0
+    container_name: rent-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./infrastructure/observability/otel-collector-config.yml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      - zipkin
+    networks:
+      - rent-network
+
+  # Prometheus â€” Metric toplama
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: rent-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - rent-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+
+  # Grafana â€” Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: rent-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - rent-network
+
+  # Mailhog â€” Email test (SMTP mock)
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: rent-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI
+    networks:
+      - rent-network
+
+  # ================================================================
+  # YÃ–NETÄ°M ARAÃ‡LARI
+  # ================================================================
+
+  # pgAdmin â€” PostgreSQL yÃ¶netimi
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: rent-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@rent.com
+      PGADMIN_DEFAULT_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - rent-network
+
+  # RedisInsight â€” Redis GUI
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: rent-redisinsight
+    restart: unless-stopped
+    ports:
+      - "8001:5540"
+    networks:
+      - rent-network
+
+  # Consul â€” Service Discovery
+  consul:
+    image: hashicorp/consul:latest
+    container_name: rent-consul
+    restart: unless-stopped
+    ports:
+      - "8500:8500"
+      - "8600:8600/udp"
+    command: agent -dev -client=0.0.0.0
+    networks:
+      - rent-network
+
+  apigateway:
+    build:
+      context: .
+      dockerfile: src/ApiGateway/Dockerfile
+    container_name: rent-apigateway
+    ports:
+      - "5555:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - Authentication__Authority=http://localhost:8080/realms/rent-management
+      - Authentication__MetadataAddress=http://keycloak:8080/realms/rent-management/.well-known/openid-configuration
+      - Authentication__Audience=rent-management-api
+      - Authentication__RequireHttpsMetadata=false
+    networks:
+      - rent-network
+
+  frontend:
+    build:
+      context: ./frontend/rent-management
+      dockerfile: Dockerfile
+    container_name: rent-frontend
+    restart: unless-stopped
+    ports:
+      - "4200:80"
+    volumes:
+      - ./infrastructure/frontend/app-config.json:/usr/share/nginx/html/assets/app-config.json:ro
+    depends_on:
+      apigateway:
+        condition: service_started
+      keycloak-demo-users-init:
+        condition: service_completed_successfully
+    networks:
+      - rent-network
+
+  userservice:
+    build:
+      context: .
+      dockerfile: src/Services/UserService/UserService.API/Dockerfile
+    container_name: rent-userservice
+    ports:
+      - "5001:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - RabbitMQ__Username=${RABBITMQ_DEFAULT_USER}
+      - RabbitMQ__Password=${RABBITMQ_DEFAULT_PASS}
+      - Database__MigrateOnStartup=true
+      - Authentication__Authority=http://localhost:8080/realms/rent-management
+      - Authentication__MetadataAddress=http://keycloak:8080/realms/rent-management/.well-known/openid-configuration
+      - Authentication__Audience=rent-management-api
+      - Authentication__RequireHttpsMetadata=false
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=user_service_db;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__RedisConnection=redis:6379,password=${REDIS_PASSWORD},abortConnect=false
+      - Keycloak__AdminUrl=http://keycloak:8080
+      - Keycloak__AdminUser=${KEYCLOAK_ADMIN}
+      - Keycloak__AdminPassword=${KEYCLOAK_ADMIN_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - rent-network
+
+  propertyservice:
+    build:
+      context: .
+      dockerfile: src/Services/PropertyService/PropertyService.API/Dockerfile
+    container_name: rent-propertyservice
+    ports:
+      - "5002:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - RabbitMQ__Username=${RABBITMQ_DEFAULT_USER}
+      - RabbitMQ__Password=${RABBITMQ_DEFAULT_PASS}
+      - Database__MigrateOnStartup=true
+      - Authentication__Authority=http://localhost:8080/realms/rent-management
+      - Authentication__MetadataAddress=http://keycloak:8080/realms/rent-management/.well-known/openid-configuration
+      - Authentication__Audience=rent-management-api
+      - Authentication__RequireHttpsMetadata=false
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - Mongo__Host=mongodb:27017
+      - Mongo__Username=${MONGO_INITDB_ROOT_USERNAME}
+      - Mongo__Password=${MONGO_INITDB_ROOT_PASSWORD}
+      - Mongo__AuthenticationSource=admin
+      - ConnectionStrings__RedisConnection=redis:6379,password=${REDIS_PASSWORD},abortConnect=false
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - rent-network
+
+  leaseservice:
+    build:
+      context: .
+      dockerfile: src/Services/LeaseService/LeaseService.API/Dockerfile
+    container_name: rent-leaseservice
+    ports:
+      - "5003:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - RabbitMQ__Username=${RABBITMQ_DEFAULT_USER}
+      - RabbitMQ__Password=${RABBITMQ_DEFAULT_PASS}
+      - Database__MigrateOnStartup=true
+      - Authentication__Authority=http://localhost:8080/realms/rent-management
+      - Authentication__MetadataAddress=http://keycloak:8080/realms/rent-management/.well-known/openid-configuration
+      - Authentication__Audience=rent-management-api
+      - Authentication__RequireHttpsMetadata=false
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - ConnectionStrings__DefaultConnection=Server=sqlserver,1433;Database=lease_service_db;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
+      - ConnectionStrings__RedisConnection=redis:6379,password=${REDIS_PASSWORD},abortConnect=false
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      sqlserver-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - rent-network
+
+  paymentservice:
+    build:
+      context: .
+      dockerfile: src/Services/PaymentService/PaymentService.API/Dockerfile
+    container_name: rent-paymentservice
+    ports:
+      - "5004:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - RabbitMQ__Username=${RABBITMQ_DEFAULT_USER}
+      - RabbitMQ__Password=${RABBITMQ_DEFAULT_PASS}
+      - Database__MigrateOnStartup=true
+      - Authentication__Authority=http://localhost:8080/realms/rent-management
+      - Authentication__MetadataAddress=http://keycloak:8080/realms/rent-management/.well-known/openid-configuration
+      - Authentication__Audience=rent-management-api
+      - Authentication__RequireHttpsMetadata=false
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - Payments__Mode=Simulated
+      - ConnectionStrings__DefaultConnection=Server=sqlserver,1433;Database=payment_service_db;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
+      - ConnectionStrings__RedisConnection=redis:6379,password=${REDIS_PASSWORD},abortConnect=false
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      sqlserver-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - rent-network
+
+  maintenanceservice:
+    build:
+      context: .
+      dockerfile: src/Services/MaintenanceService/MaintenanceService.API/Dockerfile
+    container_name: rent-maintenanceservice
+    ports:
+      - "5005:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - RabbitMQ__Username=${RABBITMQ_DEFAULT_USER}
+      - RabbitMQ__Password=${RABBITMQ_DEFAULT_PASS}
+      - Database__MigrateOnStartup=true
+      - Authentication__Authority=http://localhost:8080/realms/rent-management
+      - Authentication__MetadataAddress=http://keycloak:8080/realms/rent-management/.well-known/openid-configuration
+      - Authentication__Audience=rent-management-api
+      - Authentication__RequireHttpsMetadata=false
+      - ConnectionStrings__DefaultConnection=Server=sqlserver,1433;Database=MaintenanceDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      sqlserver-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - rent-network
+
+  documentservice:
+    build:
+      context: .
+      dockerfile: src/Services/DocumentService/DocumentService.API/Dockerfile
+    container_name: rent-documentservice
+    ports:
+      - "5006:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - RabbitMQ__Username=${RABBITMQ_DEFAULT_USER}
+      - RabbitMQ__Password=${RABBITMQ_DEFAULT_PASS}
+      - Database__MigrateOnStartup=true
+      - Authentication__Authority=http://localhost:8080/realms/rent-management
+      - Authentication__MetadataAddress=http://keycloak:8080/realms/rent-management/.well-known/openid-configuration
+      - Authentication__Audience=rent-management-api
+      - Authentication__RequireHttpsMetadata=false
+      - Storage__S3Endpoint=http://minio:9000
+      - Storage__Bucket=documents
+      - Storage__AccessKey=${MINIO_ROOT_USER}
+      - Storage__SecretKey=${MINIO_ROOT_PASSWORD}
+      - ConnectionStrings__DefaultConnection=Server=sqlserver,1433;Database=DocumentDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      sqlserver-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    networks:
+      - rent-network
+
+  notificationservice:
+    build:
+      context: .
+      dockerfile: src/Services/NotificationService/NotificationService.API/Dockerfile
+    container_name: rent-notificationservice
+    ports:
+      - "5007:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - RabbitMQ__Username=${RABBITMQ_DEFAULT_USER}
+      - RabbitMQ__Password=${RABBITMQ_DEFAULT_PASS}
+      - Database__MigrateOnStartup=true
+      - Authentication__Authority=http://localhost:8080/realms/rent-management
+      - Authentication__MetadataAddress=http://keycloak:8080/realms/rent-management/.well-known/openid-configuration
+      - Authentication__Audience=rent-management-api
+      - Authentication__RequireHttpsMetadata=false
+      - Email__Smtp__Host=mailhog
+      - Email__Smtp__Port=1025
+      - Email__Smtp__EnableSsl=false
+      - Email__Smtp__SenderAddress=noreply@rentflow.local
+      - Email__Smtp__SenderName=RentFlow
+      - ConnectionStrings__DefaultConnection=Server=sqlserver,1433;Database=NotificationDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      sqlserver-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+    networks:
+      - rent-network
+
+  reportservice:
+    build:
+      context: .
+      dockerfile: src/Services/ReportService/ReportService.API/Dockerfile
+    container_name: rent-reportservice
+    ports:
+      - "5009:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - RabbitMQ__Username=${RABBITMQ_DEFAULT_USER}
+      - RabbitMQ__Password=${RABBITMQ_DEFAULT_PASS}
+      - Database__MigrateOnStartup=true
+      - Authentication__Authority=http://localhost:8080/realms/rent-management
+      - Authentication__MetadataAddress=http://keycloak:8080/realms/rent-management/.well-known/openid-configuration
+      - Authentication__Audience=rent-management-api
+      - Authentication__RequireHttpsMetadata=false
+      - ConnectionStrings__DefaultConnection=Server=sqlserver,1433;Database=ReportDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      sqlserver-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - rent-network
+
+  sagaorchestrator:
+    build:
+      context: .
+      dockerfile: src/SagaOrchestrator/SagaOrchestrator.API/Dockerfile
+    container_name: rent-sagaorchestrator
+    ports:
+      - "5008:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - RabbitMQ__Username=${RABBITMQ_DEFAULT_USER}
+      - RabbitMQ__Password=${RABBITMQ_DEFAULT_PASS}
+      - Database__MigrateOnStartup=true
+      - Authentication__Authority=http://localhost:8080/realms/rent-management
+      - Authentication__MetadataAddress=http://keycloak:8080/realms/rent-management/.well-known/openid-configuration
+      - Authentication__Audience=rent-management-api
+      - Authentication__RequireHttpsMetadata=false
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=saga_db;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - rent-network
+
+# ================================================================
+# VOLUMES
+# ================================================================
+volumes:
+  postgres_data:
+  sqlserver_data:
+  mongo_data:
+  redis_data:
+  minio_data:
+  seq_data:
+  prometheus_data:
+  grafana_data:
+  pgadmin_data:
+
+# ================================================================
+# NETWORKS
+# ================================================================
+networks:
+  rent-network:
+    driver: bridge
+    name: rent-management-network

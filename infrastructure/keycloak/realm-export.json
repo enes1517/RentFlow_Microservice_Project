@@ -1,0 +1,127 @@
+{
+  "id": "rent-management",
+  "realm": "rent-management",
+  "displayName": "RentFlow",
+  "loginTheme": "rentflow",
+  "internationalizationEnabled": true,
+  "supportedLocales": [
+    "tr",
+    "en"
+  ],
+  "defaultLocale": "tr",
+  "enabled": true,
+  "registrationAllowed": true,
+  "resetPasswordAllowed": true,
+  "rememberMe": true,
+  "defaultRoles": [
+    "ROLE_USER"
+  ],
+  "identityProviders": [
+    {
+      "alias": "google",
+      "displayName": "Google ile Giriş Yap",
+      "internalId": "google-idp",
+      "providerId": "google",
+      "enabled": true,
+      "updateProfileFirstLoginMode": "on",
+      "trustEmail": true,
+      "storeToken": false,
+      "addReadTokenRoleOnCreate": false,
+      "authenticateByDefault": false,
+      "linkOnly": false,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "config": {
+        "clientId": "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
+        "clientSecret": "YOUR_GOOGLE_CLIENT_SECRET",
+        "useJwksUrl": "true"
+      }
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "ROLE_USER",
+        "description": "Base User Role"
+      },
+      {
+        "name": "ROLE_ADMIN",
+        "description": "Administrator Role"
+      },
+      {
+        "name": "ROLE_TENANT",
+        "description": "Tenant Role"
+      },
+      {
+        "name": "ROLE_LANDLORD",
+        "description": "Landlord Role"
+      }
+    ]
+  },
+  "users": [
+    {
+      "username": "admin@demo.com",
+      "email": "admin@demo.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Admin",
+      "lastName": "User",
+      "realmRoles": [
+        "ROLE_ADMIN"
+      ]
+    },
+    {
+      "username": "tenant@demo.com",
+      "email": "tenant@demo.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "Tenant",
+      "realmRoles": [
+        "ROLE_TENANT"
+      ]
+    },
+    {
+      "username": "landlord@demo.com",
+      "email": "landlord@demo.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "Landlord",
+      "realmRoles": [
+        "ROLE_LANDLORD"
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "rent-management-frontend",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "redirectUris": [
+        "http://localhost:4200/*",
+        "http://localhost:5555/*"
+      ],
+      "webOrigins": [
+        "http://localhost:4200",
+        "http://localhost:5555"
+      ],
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "rent-management-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "rent-management-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}

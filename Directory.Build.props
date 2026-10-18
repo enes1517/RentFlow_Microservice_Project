@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Suppress transitive vulnerability audit warnings and assembly version binding resolution notices -->
+    <NoWarn>$(NoWarn);NU1902;NU1903;MSB3277</NoWarn>
+  </PropertyGroup>
+</Project>

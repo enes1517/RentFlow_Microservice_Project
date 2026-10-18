@@ -1,0 +1,13 @@
+**/.git/
+**/bin/
+**/obj/
+**/node_modules/
+**/.vs/
+**/.vscode/
+**/.idea/
+**/.dockerignore
+**/*.user
+**/*.suo
+**/TestResults/
+frontend/rent-management/dist/
+frontend/rent-management/.angular/
